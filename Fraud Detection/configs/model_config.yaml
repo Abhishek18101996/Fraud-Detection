@@ -25,7 +25,7 @@ experiment:
 # ──────────────────────────────────────────────────────────────
 data:
   dataset: "ulb_creditcard"           # ulb_creditcard | paysim | synthetic
-  data_dir: "data/"
+  data_dir: "src/data/"
   filename: "creditcard.csv"
 
   splits:

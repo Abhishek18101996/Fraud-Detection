@@ -101,7 +101,6 @@ class FraudPreprocessor:
             smote = SMOTE(
                 k_neighbors=self.smote_k_neighbors,
                 random_state=self.smote_random_state,
-                n_jobs=-1,
             )
             X_res, y_res = smote.fit_resample(X_scaled, y)
             logger.info(

@@ -69,6 +69,7 @@ class XGBoostFraudClassifier:
             tree_method="hist",
             eval_metric=["logloss", "aucpr"],
             use_label_encoder=False,
+            early_stopping_rounds = early_stopping_rounds
         )
         self.early_stopping_rounds = early_stopping_rounds
         self.model_: Optional[xgb.XGBClassifier] = None
@@ -99,7 +100,6 @@ class XGBoostFraudClassifier:
         self.model_.fit(
             X_train, y_train,
             eval_set=[(X_val, y_val)],
-            early_stopping_rounds=self.early_stopping_rounds,
             verbose=100,
         )
 

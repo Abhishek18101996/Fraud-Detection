@@ -150,7 +150,7 @@ class FraudDetectionPipeline:
 
         # Data check
         if not self.args.synthetic:
-            data_path = Path(self.args.data_dir or "data") / "creditcard.csv"
+            data_path = Path(self.args.data_dir or "src/data") / "creditcard.csv"
             if data_path.exists():
                 import os
                 size_mb = os.path.getsize(data_path) / 1_048_576
@@ -401,7 +401,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     # Data
-    parser.add_argument("--data-dir", default="data", help="Directory containing creditcard.csv")
+    parser.add_argument("--data-dir", default="src/data", help="Directory containing creditcard.csv")
     parser.add_argument("--synthetic", action="store_true", help="Use synthetic data (no Kaggle required)")
     parser.add_argument("--checkpoint-dir", default="checkpoints", help="Directory to save model artifacts")
 
