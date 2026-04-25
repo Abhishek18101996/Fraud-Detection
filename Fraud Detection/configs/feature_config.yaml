@@ -1,0 +1,372 @@
+# ============================================================
+# configs/feature_config.yaml
+# ============================================================
+# Complete feature catalogue for the fraud detection system.
+# Defines: raw features, engineered features, GNN features,
+#          feature store mappings, and data quality rules.
+# ============================================================
+
+# ──────────────────────────────────────────────────────────────
+# Raw Features (ULB Dataset)
+# ──────────────────────────────────────────────────────────────
+raw_features:
+
+  pca_components:
+    description: >
+      28 PCA-transformed features from original transaction data.
+      Original features anonymised by dataset authors for privacy.
+      V1 and V14 are strongest fraud predictors in the ULB dataset.
+    features:
+      - name: V1
+        dtype: float32
+        range: [-56.41, 2.45]
+        fraud_predictive_rank: 2
+        note: "Strong fraud signal — highly negative in fraud cases"
+      - name: V2
+        dtype: float32
+        range: [-72.72, 22.06]
+        fraud_predictive_rank: 8
+      - name: V3
+        dtype: float32
+        range: [-48.33, 9.38]
+        fraud_predictive_rank: 5
+      - name: V4
+        dtype: float32
+        range: [-5.68, 16.88]
+        fraud_predictive_rank: 7
+      - name: V5
+        dtype: float32
+        range: [-113.74, 34.80]
+        fraud_predictive_rank: 12
+      - name: V6
+        dtype: float32
+        range: [-26.16, 73.30]
+        fraud_predictive_rank: 15
+      - name: V7
+        dtype: float32
+        range: [-43.56, 120.59]
+        fraud_predictive_rank: 6
+      - name: V8
+        dtype: float32
+        range: [-73.22, 20.01]
+        fraud_predictive_rank: 18
+      - name: V9
+        dtype: float32
+        range: [-13.43, 15.59]
+        fraud_predictive_rank: 16
+      - name: V10
+        dtype: float32
+        range: [-24.59, 23.75]
+        fraud_predictive_rank: 4
+      - name: V11
+        dtype: float32
+        range: [-4.80, 12.02]
+        fraud_predictive_rank: 11
+      - name: V12
+        dtype: float32
+        range: [-18.68, 7.85]
+        fraud_predictive_rank: 3
+      - name: V13
+        dtype: float32
+        range: [-5.79, 7.13]
+        fraud_predictive_rank: 22
+      - name: V14
+        dtype: float32
+        range: [-19.21, 10.53]
+        fraud_predictive_rank: 1      # MOST predictive — very negative in fraud
+        note: "Top fraud indicator in ULB dataset"
+      - name: V15
+        dtype: float32
+        range: [-4.50, 8.88]
+        fraud_predictive_rank: 24
+      - name: V16
+        dtype: float32
+        range: [-14.13, 17.32]
+        fraud_predictive_rank: 13
+      - name: V17
+        dtype: float32
+        range: [-25.16, 9.25]
+        fraud_predictive_rank: 9
+        note: "Strong fraud signal alongside V14"
+      - name: V18
+        dtype: float32
+        range: [-9.50, 5.04]
+        fraud_predictive_rank: 17
+      - name: V19
+        dtype: float32
+        range: [-7.21, 5.59]
+        fraud_predictive_rank: 20
+      - name: V20
+        dtype: float32
+        range: [-54.50, 39.42]
+        fraud_predictive_rank: 21
+      - name: V21
+        dtype: float32
+        range: [-34.83, 27.20]
+        fraud_predictive_rank: 10
+      - name: V22
+        dtype: float32
+        range: [-10.93, 10.50]
+        fraud_predictive_rank: 23
+      - name: V23
+        dtype: float32
+        range: [-44.81, 22.53]
+        fraud_predictive_rank: 26
+      - name: V24
+        dtype: float32
+        range: [-2.84, 4.58]
+        fraud_predictive_rank: 28
+      - name: V25
+        dtype: float32
+        range: [-10.30, 7.52]
+        fraud_predictive_rank: 27
+      - name: V26
+        dtype: float32
+        range: [-2.60, 3.52]
+        fraud_predictive_rank: 25
+      - name: V27
+        dtype: float32
+        range: [-22.57, 31.61]
+        fraud_predictive_rank: 14
+      - name: V28
+        dtype: float32
+        range: [-15.43, 33.85]
+        fraud_predictive_rank: 19
+
+  transaction_fields:
+    - name: Amount
+      dtype: float32
+      range: [0.0, 25691.16]
+      unit: "EUR (ULB) / USD (production)"
+      fraud_predictive_rank: 30
+      note: "Median legitimate: €22 | Median fraud: €9 (ULB peculiarity)"
+      validation:
+        min: 0.01
+        max: 1000000.0
+        nullable: false
+
+    - name: Time
+      dtype: float32
+      range: [0.0, 172792.0]
+      unit: "seconds since first transaction in dataset"
+      note: "Represents ~48 hours of European card transactions"
+      fraud_predictive_rank: 40
+      transform: "hour_of_day = (Time / 3600) % 24"
+
+  label:
+    - name: Class
+      dtype: int32
+      values: [0, 1]
+      meaning: {0: "legitimate", 1: "fraud"}
+      prevalence:
+        legitimate: 284315     # 99.827%
+        fraud: 492             # 0.173%
+        ratio: "578:1"
+
+
+# ──────────────────────────────────────────────────────────────
+# Engineered Features
+# ──────────────────────────────────────────────────────────────
+engineered_features:
+
+  amount_derived:
+    - name: amount_log
+      formula: "log1p(Amount)"
+      dtype: float32
+      rationale: "Log transform reduces right skew; makes distribution more normal"
+      fraud_predictive_rank: 1
+
+    - name: amount_zscore
+      formula: "(Amount - rolling_mean) / (rolling_std + 1e-8)"
+      dtype: float32
+      rationale: "Standardised deviation from expected amount for this user"
+
+    - name: amount_rolling_mean_10
+      formula: "Amount.rolling(10).mean()"
+      dtype: float32
+      rationale: "Recent average transaction amount — detects sudden amount spikes"
+
+    - name: amount_rolling_std_10
+      formula: "Amount.rolling(10).std()"
+      dtype: float32
+      rationale: "Amount volatility — high std may indicate testing pattern"
+
+  time_derived:
+    - name: hour_of_day
+      formula: "(Time / 3600) % 24"
+      dtype: float32
+      range: [0.0, 23.99]
+      rationale: "Fraud spikes during night hours (01:00–05:00 AST)"
+
+    - name: is_night
+      formula: "1 if (hour_of_day < 6 or hour_of_day > 22) else 0"
+      dtype: int8
+      rationale: "Binary flag for high-risk night window"
+
+    - name: is_weekend_approx
+      formula: "(Time // 86400) % 7 >= 5"
+      dtype: int8
+      rationale: "Approximate weekend flag (weekend fraud rate +30%)"
+
+    - name: time_since_last_txn
+      formula: "Time.diff().clip(lower=0)"
+      dtype: float32
+      unit: "seconds"
+      rationale: "Very short intervals (<60s) indicate card testing"
+
+  velocity_features:
+    - name: txn_velocity_1h
+      formula: "count(transactions in previous 3600 seconds)"
+      dtype: float32
+      rationale: "High velocity in 1h is a primary fraud indicator"
+      fraud_predictive_rank: 3
+
+    - name: txn_velocity_6h
+      formula: "count(transactions in previous 21600 seconds)"
+      dtype: float32
+
+    - name: txn_velocity_24h
+      formula: "count(transactions in previous 86400 seconds)"
+      dtype: float32
+
+  interactions:
+    - name: v1_v2_interaction
+      formula: "V1 * V2"
+      dtype: float32
+      rationale: "Cross-feature interaction between top PCA components"
+
+    - name: v3_v4_interaction
+      formula: "V3 * V4"
+      dtype: float32
+
+    - name: v14_abs
+      formula: "abs(V14)"
+      dtype: float32
+      rationale: "V14 is very negative in fraud — absolute value captures magnitude"
+      fraud_predictive_rank: 2
+
+    - name: v17_abs
+      formula: "abs(V17)"
+      dtype: float32
+      rationale: "V17 complementary fraud signal to V14"
+
+  network_features:
+    - name: merchant_fraud_rate
+      formula: "historical_fraud_count[merchant] / total_txns[merchant]"
+      dtype: float32
+      range: [0.0, 1.0]
+      source: "feature_store"
+      rationale: "Merchants with high historic fraud rate are risk multipliers"
+      fraud_predictive_rank: 5
+
+    - name: counterparty_fraud_rate
+      formula: "historical_fraud_count[counterparty] / total_txns[counterparty]"
+      dtype: float32
+      range: [0.0, 1.0]
+      source: "feature_store"
+      rationale: "Graph neighbourhood fraud signal — core GNN complement"
+      fraud_predictive_rank: 4
+
+    - name: account_age_days
+      formula: "(current_date - account_open_date).days"
+      dtype: float32
+      rationale: "New accounts (<30 days) have significantly higher fraud rate"
+      source: "core_banking_api"
+
+
+# ──────────────────────────────────────────────────────────────
+# GNN Embedding Features
+# ──────────────────────────────────────────────────────────────
+gnn_features:
+  description: >
+    256-dimensional edge embeddings from GraphSAGE.
+    Each dimension is a latent learned representation of
+    the transaction's graph neighbourhood.
+    Not interpretable individually — used as opaque features for XGBoost.
+
+  embedding_dim: 256   # concat(src_node_128, dst_node_128)
+  feature_names:
+    pattern: "gnn_emb_{i}"  # gnn_emb_0 through gnn_emb_255
+    n_features: 256
+
+  node_types:
+    account:
+      features: ["mean_amount", "std_amount", "txn_count", "fraud_rate"]
+      feature_dim: 4
+    merchant:
+      features: ["mean_amount", "txn_count", "fraud_rate", "pad_zero"]
+      feature_dim: 4
+
+  edge_features:
+    - "amount_log"
+    - "time_normalised"
+    - "V1 through V28"
+  edge_feature_dim: 30
+
+
+# ──────────────────────────────────────────────────────────────
+# Feature Store Specification (for production deployment)
+# ──────────────────────────────────────────────────────────────
+feature_store:
+  backend: "redis"
+  ttl_seconds: 3600
+
+  real_time_features:
+    - key_pattern: "merchant:{merchant_id}:fraud_rate"
+      refresh: "5_minutes"
+      fallback: 0.0
+    - key_pattern: "account:{account_id}:velocity_1h"
+      refresh: "real_time"
+      window: "1h"
+    - key_pattern: "account:{account_id}:velocity_24h"
+      refresh: "real_time"
+      window: "24h"
+    - key_pattern: "counterparty:{counterparty_id}:fraud_rate"
+      refresh: "1_hour"
+      fallback: 0.0
+
+  batch_features:
+    - name: "account_age_days"
+      source: "core_banking_db.accounts"
+      refresh: "daily"
+    - name: "merchant_fraud_rate_7d"
+      source: "fraud_analytics.merchant_aggregates"
+      refresh: "hourly"
+
+
+# ──────────────────────────────────────────────────────────────
+# Data Quality Rules
+# ──────────────────────────────────────────────────────────────
+data_quality:
+  validation_rules:
+    - field: "Amount"
+      rules:
+        - type: "not_null"
+        - type: "range"
+          min: 0.01
+          max: 1000000.0
+        - type: "dtype"
+          expected: "float"
+
+    - field: "Class"
+      rules:
+        - type: "not_null"
+        - type: "categorical"
+          values: [0, 1]
+
+    - field: "V14"
+      rules:
+        - type: "range"
+          min: -25.0
+          max: 15.0
+          action: "clip"      # clip | reject | warn
+
+  missing_value_strategy:
+    pca_features: "mean_impute"
+    amount: "reject"          # Cannot impute amount
+    time: "previous_value"
+    engineered: "zero_fill"
+
+  outlier_strategy:
+    method: "robust_scaler"   # Uses IQR — better than z-score for fraud data
+    clip_at_percentile: 99.9

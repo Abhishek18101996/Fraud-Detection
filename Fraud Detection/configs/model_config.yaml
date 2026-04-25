@@ -1,0 +1,280 @@
+# ============================================================
+# configs/model_config.yaml
+# ============================================================
+# Central model hyperparameters configuration.
+# Override via CLI args or environment variables.
+#
+# Usage:
+#   python pipelines/full_pipeline.py --config configs/model_config.yaml
+# ============================================================
+
+# ──────────────────────────────────────────────────────────────
+# Experiment Metadata
+# ──────────────────────────────────────────────────────────────
+experiment:
+  name: "fraud-detection-production"
+  run_name: "ensemble-v2.1.0"
+  tags:
+    team: "ml-platform"
+    environment: "production"
+    compliance: "UAE-VARA-CBUAE"
+    dataset: "ULB-creditcard-284k"
+
+# ──────────────────────────────────────────────────────────────
+# Data Configuration
+# ──────────────────────────────────────────────────────────────
+data:
+  dataset: "ulb_creditcard"           # ulb_creditcard | paysim | synthetic
+  data_dir: "data/"
+  filename: "creditcard.csv"
+
+  splits:
+    test_size: 0.20
+    val_size: 0.10
+    random_state: 42
+    stratify: true                    # Preserve fraud ratio across splits
+
+  imbalance:
+    strategy: "smote"                 # smote | class_weight | focal_loss | none
+    smote_k_neighbors: 5
+    smote_random_state: 42
+    # ULB dataset: 284,807 transactions, 492 fraud = 578:1 ratio
+    scale_pos_weight_auto: true       # Auto-compute from neg/pos ratio
+
+# ──────────────────────────────────────────────────────────────
+# Feature Engineering
+# ──────────────────────────────────────────────────────────────
+features:
+  # PCA components (V1–V28 already in dataset, keep all)
+  include_pca: true
+  n_pca_components: 28
+
+  # Engineered features
+  amount_transforms:
+    - "log1p"                         # log(1 + Amount)
+    - "zscore"                        # (Amount - mean) / std
+
+  time_features:
+    - "hour_of_day"                   # (Time / 3600) % 24
+    - "is_night"                      # hour < 6 or > 22
+    - "is_weekend_approx"             # day approximation
+
+  velocity_features:
+    - window_1h: 3600
+    - window_6h: 21600
+    - window_24h: 86400
+
+  rolling_stats:
+    window: 10
+    metrics: ["mean", "std"]
+
+  interactions:
+    - ["V1", "V2"]                    # Most predictive PCA components
+    - ["V3", "V4"]
+
+  absolute_values: ["V14", "V17"]     # Highly negative in fraud transactions
+
+# ──────────────────────────────────────────────────────────────
+# XGBoost Baseline Configuration
+# ──────────────────────────────────────────────────────────────
+xgboost:
+  # Training
+  n_estimators: 500
+  early_stopping_rounds: 50
+  eval_metric: "aucpr"               # precision-recall AUC (better for imbalance)
+
+  # Tree structure
+  max_depth: 6
+  min_child_weight: 5
+  gamma: 0.1                         # Min loss reduction for split
+
+  # Sampling
+  subsample: 0.80
+  colsample_bytree: 0.80
+  colsample_bylevel: 1.0
+
+  # Regularisation
+  reg_alpha: 0.1                     # L1
+  reg_lambda: 1.0                    # L2
+
+  # Learning
+  learning_rate: 0.05
+  scale_pos_weight: 578.0            # Auto-overridden if scale_pos_weight_auto=true
+
+  # System
+  tree_method: "hist"                # Fastest for tabular
+  n_jobs: -1
+  random_state: 42
+
+  # Threshold optimisation
+  threshold_metric: "f1"             # f1 | recall | precision
+  threshold_search_range: [0.1, 0.95]
+  threshold_search_step: 0.01
+
+  # Optuna hyperparameter search
+  optuna:
+    enabled: false                   # Set true for production tuning (~2 hours)
+    n_trials: 50
+    direction: "maximize"
+    metric: "auc_pr"
+    timeout_seconds: 7200
+    search_space:
+      n_estimators: [200, 1000]
+      max_depth: [4, 10]
+      learning_rate: [0.001, 0.3]
+      subsample: [0.5, 1.0]
+      colsample_bytree: [0.5, 1.0]
+      min_child_weight: [1, 20]
+      reg_alpha: [0.0001, 10.0]
+      reg_lambda: [0.0001, 10.0]
+      scale_pos_weight: [100.0, 1000.0]
+
+# ──────────────────────────────────────────────────────────────
+# GraphSAGE GNN Configuration
+# ──────────────────────────────────────────────────────────────
+gnn:
+  enabled: true
+
+  # Architecture
+  architecture: "graphsage"          # graphsage | gcn | gat | gin
+  hidden_channels: 128
+  num_layers: 3                      # 3 hops → captures 3rd-degree counterparty
+  dropout: 0.30
+  embedding_dim: 128                 # Output embedding size per node
+  aggregation: "mean"                # mean | max | sum | lstm
+
+  # Edge features
+  edge_feature_dim: 30               # amount_log + time_norm + V1..V28
+  node_feature_dim: 4                # mean_amount, std_amount, txn_count, fraud_rate
+
+  # Training
+  max_epochs: 100
+  patience: 15                       # Early stopping patience (epochs)
+  learning_rate: 0.001
+  weight_decay: 0.0001
+
+  # Loss function
+  loss: "focal"                      # focal | bce | weighted_bce
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+
+  # LR scheduler
+  scheduler: "cosine_warm_restarts"
+  scheduler_T0: 20
+  scheduler_T_mult: 2
+
+  # Gradient
+  gradient_clip_norm: 1.0
+
+  # Mini-batch graph
+  batch_size: 4096                   # Transactions per mini-graph
+
+  # Graph construction
+  n_time_bins: 48                    # 48 × 1-hour bins for 2-day dataset
+  n_v1_bins: 10                      # V1 discretisation buckets
+  n_merchant_bins: 20                # Merchant category bins
+
+# ──────────────────────────────────────────────────────────────
+# Ensemble Configuration
+# ──────────────────────────────────────────────────────────────
+ensemble:
+  # GNN embedding concatenation
+  gnn_embedding_strategy: "edge"     # edge | node | both
+  # edge: concat(src_node_emb, dst_node_emb) → 256 dims
+  # node: avg pool node embeddings → 128 dims
+  # both: edge + global pool → 384 dims
+
+  # Final XGBoost on top of [tabular | gnn_embeddings]
+  xgboost_ensemble:
+    n_estimators: 500
+    max_depth: 7
+    learning_rate: 0.04
+    subsample: 0.85
+    colsample_bytree: 0.75
+    early_stopping_rounds: 50
+
+  # Decision threshold
+  fraud_threshold: 0.50
+  high_risk_threshold: 0.75
+  critical_risk_threshold: 0.90
+
+# ──────────────────────────────────────────────────────────────
+# SHAP Explainability
+# ──────────────────────────────────────────────────────────────
+explainability:
+  backend: "tree_shap"               # tree_shap | kernel_shap
+  n_background_samples: 200          # SHAP background dataset size
+  feature_perturbation: "interventional"
+
+  # API response
+  top_k_reasons: 3                   # Returned in /predict response (VARA requirement)
+  top_k_audit: 10                    # Stored in audit log
+
+  # Compliance
+  generate_force_plots: true
+  generate_summary_plots: true
+  store_all_shap_values: true        # Store full SHAP vector per prediction (7-year retention)
+
+# ──────────────────────────────────────────────────────────────
+# Model Registry
+# ──────────────────────────────────────────────────────────────
+registry:
+  backend: "mlflow"
+  model_name: "fraud-detection-ensemble"
+  promote_to_production: true
+  archive_previous_versions: true
+
+  # Performance gates (model must beat these to be promoted)
+  promotion_thresholds:
+    min_auc_roc: 0.970
+    min_auc_pr: 0.800
+    min_f1: 0.850
+    min_recall: 0.800           # Prioritise recall for fraud (catch more)
+    max_latency_p99_ms: 50.0
+
+# ──────────────────────────────────────────────────────────────
+# Monitoring & Drift Detection
+# ──────────────────────────────────────────────────────────────
+monitoring:
+  drift_detection:
+    enabled: true
+    method: "psi"                    # psi | ks_test | js_divergence | evidently
+    n_bins: 10
+    psi_threshold_warning: 0.10
+    psi_threshold_critical: 0.25
+    window_hours: 24
+    run_frequency_hours: 1
+
+  features_to_monitor:
+    - "amount_log"
+    - "V14"
+    - "V17"
+    - "V12"
+    - "time_since_last_txn"
+    - "txn_velocity_1h"
+    - "fraud_score_distribution"     # Output drift
+
+  alerting:
+    slack_webhook_env: "DRIFT_ALERT_WEBHOOK"
+    email_on_critical: true
+
+  performance_monitoring:
+    enabled: true
+    window_days: 30
+    alert_on_auc_drop: 0.02         # Alert if AUC-ROC drops by >0.02
+
+# ──────────────────────────────────────────────────────────────
+# Retraining Policy
+# ──────────────────────────────────────────────────────────────
+retraining:
+  trigger_conditions:
+    - type: "drift"
+      threshold: "critical"         # Retrain on critical PSI drift
+    - type: "schedule"
+      frequency: "weekly"           # Weekly retraining regardless of drift
+    - type: "performance"
+      metric: "auc_roc"
+      drop_threshold: 0.02
+
+  strategy: "full_retrain"          # full_retrain | incremental | warm_start
+  min_new_samples: 10000            # Min new labeled samples before retraining

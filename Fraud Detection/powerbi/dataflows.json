@@ -1,0 +1,359 @@
+{
+  "version": "1.0",
+  "name": "UAE AML Fraud Detection Dashboard",
+  "description": "Power BI Dataflow connecting to Fraud Detection API and GCP PostgreSQL for UAE CBUAE compliance reporting",
+  "compliance": {
+    "jurisdiction": "UAE",
+    "framework": "CBUAE AML Circular 2/2024 | UAE VARA Regulation 2023",
+    "refresh_sla_minutes": 15,
+    "data_retention_days": 2555
+  },
+
+  "datasources": [
+    {
+      "id": "fraud_api",
+      "name": "Fraud Detection REST API",
+      "type": "web_connector",
+      "base_url": "${FRAUD_API_BASE_URL}",
+      "authentication": {
+        "type": "api_key",
+        "header": "X-API-Key",
+        "value_env": "FRAUD_API_KEY"
+      },
+      "timeout_seconds": 30,
+      "retry_attempts": 3
+    },
+    {
+      "id": "fraud_postgres",
+      "name": "GCP Cloud SQL — Fraud Analytics DB",
+      "type": "postgresql",
+      "host": "${DB_HOST}",
+      "port": 5432,
+      "database": "fraud_db",
+      "schema": "fraud_analytics",
+      "authentication": {
+        "type": "credentials",
+        "username_env": "DB_USER",
+        "password_env": "DB_PASSWORD",
+        "ssl_mode": "require"
+      },
+      "connection_pool_size": 5
+    }
+  ],
+
+  "queries": [
+    {
+      "id": "q_fraud_rate_hourly",
+      "name": "Fraud Rate — Hourly (48h)",
+      "description": "Hourly fraud rate time series for line chart",
+      "datasource": "fraud_api",
+      "endpoint": "/api/v1/dashboard/fraud-rate",
+      "method": "GET",
+      "params": { "hours": 48 },
+      "refresh_interval_minutes": 15,
+      "power_query": [
+        "let",
+        "  Source = Json.Document(Web.Contents(BaseUrl & \"/api/v1/dashboard/fraud-rate?hours=48\")),",
+        "  DataList = Source[data],",
+        "  ToTable = Table.FromList(DataList, Splitter.SplitByNothing(), null, null, ExtraValues.Error),",
+        "  Expanded = Table.ExpandRecordColumn(ToTable, \"Column1\", {\"timestamp\", \"hour\", \"fraud_rate\", \"total_transactions\", \"fraud_count\", \"avg_fraud_score\"}),",
+        "  TypedTable = Table.TransformColumnTypes(Expanded, {",
+        "    {\"timestamp\", type datetimezone},",
+        "    {\"hour\", Int64.Type},",
+        "    {\"fraud_rate\", type number},",
+        "    {\"total_transactions\", Int64.Type},",
+        "    {\"fraud_count\", Int64.Type},",
+        "    {\"avg_fraud_score\", type number}",
+        "  })",
+        "in TypedTable"
+      ]
+    },
+    {
+      "id": "q_merchant_risk",
+      "name": "Merchant Category Risk",
+      "description": "Fraud risk per merchant category for bar chart",
+      "datasource": "fraud_api",
+      "endpoint": "/api/v1/dashboard/merchant-risk",
+      "method": "GET",
+      "params": { "limit": 15 },
+      "refresh_interval_minutes": 30,
+      "power_query": [
+        "let",
+        "  Source = Json.Document(Web.Contents(BaseUrl & \"/api/v1/dashboard/merchant-risk?limit=15\")),",
+        "  ToTable = Table.FromList(Source, Splitter.SplitByNothing(), null, null, ExtraValues.Error),",
+        "  Expanded = Table.ExpandRecordColumn(ToTable, \"Column1\", {\"merchant_category\", \"transaction_count\", \"fraud_count\", \"fraud_rate\", \"avg_fraud_score\", \"risk_tier\"}),",
+        "  TypedTable = Table.TransformColumnTypes(Expanded, {",
+        "    {\"merchant_category\", type text},",
+        "    {\"transaction_count\", Int64.Type},",
+        "    {\"fraud_count\", Int64.Type},",
+        "    {\"fraud_rate\", type number},",
+        "    {\"avg_fraud_score\", type number},",
+        "    {\"risk_tier\", type text}",
+        "  })",
+        "in TypedTable"
+      ]
+    },
+    {
+      "id": "q_shap_distribution",
+      "name": "SHAP Reason Distribution",
+      "description": "Feature importance from SHAP for treemap",
+      "datasource": "fraud_api",
+      "endpoint": "/api/v1/dashboard/shap-distribution",
+      "method": "GET",
+      "params": { "top_n": 15 },
+      "refresh_interval_minutes": 60,
+      "power_query": [
+        "let",
+        "  Source = Json.Document(Web.Contents(BaseUrl & \"/api/v1/dashboard/shap-distribution?top_n=15\")),",
+        "  ToTable = Table.FromList(Source, Splitter.SplitByNothing(), null, null, ExtraValues.Error),",
+        "  Expanded = Table.ExpandRecordColumn(ToTable, \"Column1\", {\"feature\", \"count\", \"avg_impact\", \"pct_increases_risk\"}),",
+        "  TypedTable = Table.TransformColumnTypes(Expanded, {",
+        "    {\"feature\", type text},",
+        "    {\"count\", Int64.Type},",
+        "    {\"avg_impact\", type number},",
+        "    {\"pct_increases_risk\", type number}",
+        "  }),",
+        "  WithRank = Table.AddIndexColumn(TypedTable, \"importance_rank\", 1, 1, Int64.Type)",
+        "in WithRank"
+      ]
+    },
+    {
+      "id": "q_risk_summary",
+      "name": "Risk Tier Summary",
+      "description": "Donut chart — transaction counts by risk tier",
+      "datasource": "fraud_api",
+      "endpoint": "/api/v1/dashboard/risk-summary",
+      "method": "GET",
+      "refresh_interval_minutes": 15,
+      "power_query": [
+        "let",
+        "  Source = Json.Document(Web.Contents(BaseUrl & \"/api/v1/dashboard/risk-summary\")),",
+        "  Tiers = Source[risk_tiers],",
+        "  TierNames = Record.FieldNames(Tiers),",
+        "  ToRows = List.Transform(TierNames, each {_, Record.Field(Tiers, _)[count], Record.Field(Tiers, _)[pct]}),",
+        "  ToTable = Table.FromRows(ToRows, {\"risk_tier\", \"count\", \"pct_of_total\"}),",
+        "  TypedTable = Table.TransformColumnTypes(ToTable, {",
+        "    {\"risk_tier\", type text},",
+        "    {\"count\", Int64.Type},",
+        "    {\"pct_of_total\", type number}",
+        "  }),",
+        "  WithColour = Table.AddColumn(TypedTable, \"colour\", each",
+        "    if [risk_tier] = \"LOW\" then \"#27AE60\"",
+        "    else if [risk_tier] = \"MEDIUM\" then \"#F39C12\"",
+        "    else if [risk_tier] = \"HIGH\" then \"#E67E22\"",
+        "    else \"#C0392B\"",
+        "  )",
+        "in WithColour"
+      ]
+    },
+    {
+      "id": "q_model_drift",
+      "name": "Model Drift Monitor",
+      "description": "PSI-based drift score for gauge KPI",
+      "datasource": "fraud_api",
+      "endpoint": "/api/v1/dashboard/drift",
+      "method": "GET",
+      "refresh_interval_minutes": 60,
+      "power_query": [
+        "let",
+        "  Source = Json.Document(Web.Contents(BaseUrl & \"/api/v1/dashboard/drift\")),",
+        "  ToTable = Table.FromRecords({Source}),",
+        "  TypedTable = Table.TransformColumnTypes(ToTable, {",
+        "    {\"status\", type text},",
+        "    {\"psi_score\", type number},",
+        "    {\"drift_detected\", type logical},",
+        "    {\"recommendation\", type text}",
+        "  }),",
+        "  WithGauge = Table.AddColumn(TypedTable, \"psi_gauge_pct\",",
+        "    each Number.Min(100, Number.Round([psi_score] / 0.25 * 100, 1)))",
+        "in WithGauge"
+      ]
+    },
+    {
+      "id": "q_aml_alerts",
+      "name": "AML Alert Queue",
+      "description": "HIGH and CRITICAL alerts for compliance officers",
+      "datasource": "fraud_api",
+      "endpoint": "/api/v1/dashboard/aml-alerts",
+      "method": "GET",
+      "params": { "hours": 24, "risk_tier": "HIGH" },
+      "refresh_interval_minutes": 5,
+      "power_query": [
+        "let",
+        "  Source = Json.Document(Web.Contents(BaseUrl & \"/api/v1/dashboard/aml-alerts?hours=24&risk_tier=HIGH\")),",
+        "  AlertList = Source[alerts],",
+        "  ToTable = Table.FromList(AlertList, Splitter.SplitByNothing(), null, null, ExtraValues.Error),",
+        "  Expanded = Table.ExpandRecordColumn(ToTable, \"Column1\", {\"alert_id\", \"transaction_id\", \"fraud_score\", \"risk_tier\", \"amount_usd\", \"merchant_category\", \"compliance_ref\", \"created_at\", \"top_reason\"}),",
+        "  TypedTable = Table.TransformColumnTypes(Expanded, {",
+        "    {\"fraud_score\", type number},",
+        "    {\"amount_usd\", type number},",
+        "    {\"created_at\", type datetimezone}",
+        "  })",
+        "in TypedTable"
+      ]
+    },
+    {
+      "id": "q_model_performance",
+      "name": "Model Performance Trend",
+      "description": "Rolling AUC/F1 over 30 days",
+      "datasource": "fraud_api",
+      "endpoint": "/api/v1/dashboard/model-performance",
+      "method": "GET",
+      "params": { "days": 30 },
+      "refresh_interval_minutes": 360,
+      "power_query": [
+        "let",
+        "  Source = Json.Document(Web.Contents(BaseUrl & \"/api/v1/dashboard/model-performance?days=30\")),",
+        "  PerformanceList = Source[performance],",
+        "  ToTable = Table.FromList(PerformanceList, Splitter.SplitByNothing(), null, null, ExtraValues.Error),",
+        "  Expanded = Table.ExpandRecordColumn(ToTable, \"Column1\", {\"date\", \"auc_roc\", \"auc_pr\", \"precision\", \"recall\", \"f1\", \"avg_latency_ms\", \"total_predictions\"}),",
+        "  TypedTable = Table.TransformColumnTypes(Expanded, {",
+        "    {\"date\", type date},",
+        "    {\"auc_roc\", type number},",
+        "    {\"auc_pr\", type number},",
+        "    {\"precision\", type number},",
+        "    {\"recall\", type number},",
+        "    {\"f1\", type number},",
+        "    {\"avg_latency_ms\", type number},",
+        "    {\"total_predictions\", Int64.Type}",
+        "  })",
+        "in TypedTable"
+      ]
+    }
+  ],
+
+  "visuals": [
+    {
+      "id": "v_fraud_rate_line",
+      "name": "Fraud Rate Over Time",
+      "type": "line_chart",
+      "query": "q_fraud_rate_hourly",
+      "x_axis": "timestamp",
+      "y_axis": "fraud_rate",
+      "secondary_y": "total_transactions",
+      "title": "Fraud Rate (%) — Last 48 Hours (AST)",
+      "annotations": ["UAE Night Hours: 22:00–06:00 AST higher risk"]
+    },
+    {
+      "id": "v_merchant_bar",
+      "name": "Top Merchant Categories by Fraud Rate",
+      "type": "bar_chart_horizontal",
+      "query": "q_merchant_risk",
+      "category": "merchant_category",
+      "value": "fraud_rate",
+      "colour_by": "risk_tier",
+      "colour_map": {
+        "LOW": "#27AE60", "MEDIUM": "#F39C12",
+        "HIGH": "#E67E22", "CRITICAL": "#C0392B"
+      },
+      "title": "Merchant Category Fraud Risk (7-Day)"
+    },
+    {
+      "id": "v_shap_treemap",
+      "name": "SHAP Feature Importance Treemap",
+      "type": "treemap",
+      "query": "q_shap_distribution",
+      "category": "feature",
+      "value": "count",
+      "tooltip": ["avg_impact", "pct_increases_risk"],
+      "title": "Top SHAP Risk Drivers — UAE VARA Explainability Requirement"
+    },
+    {
+      "id": "v_risk_donut",
+      "name": "Risk Tier Distribution",
+      "type": "donut_chart",
+      "query": "q_risk_summary",
+      "category": "risk_tier",
+      "value": "count",
+      "colour_field": "colour",
+      "title": "Transactions by Risk Tier (24h)"
+    },
+    {
+      "id": "v_drift_gauge",
+      "name": "Model Drift PSI Score",
+      "type": "gauge",
+      "query": "q_model_drift",
+      "value": "psi_gauge_pct",
+      "min": 0,
+      "max": 100,
+      "thresholds": [
+        {"value": 40, "colour": "#27AE60", "label": "Healthy (PSI<0.10)"},
+        {"value": 80, "colour": "#F39C12", "label": "Warning (PSI 0.10–0.25)"},
+        {"value": 100, "colour": "#C0392B", "label": "Critical (PSI>0.25)"}
+      ],
+      "title": "Model Drift Monitor — PSI Score"
+    },
+    {
+      "id": "v_alert_table",
+      "name": "AML Alert Queue",
+      "type": "table",
+      "query": "q_aml_alerts",
+      "columns": [
+        "alert_id", "transaction_id", "fraud_score",
+        "risk_tier", "amount_usd", "merchant_category",
+        "compliance_ref", "created_at", "top_reason"
+      ],
+      "conditional_formatting": {
+        "fraud_score": {
+          "type": "colour_scale",
+          "min_colour": "#27AE60",
+          "max_colour": "#C0392B"
+        }
+      },
+      "drill_through": "transaction_id → /api/v1/explain/{transaction_id}",
+      "title": "Active AML Alerts — Pending Review (CBUAE Circular 2/2024)"
+    },
+    {
+      "id": "v_performance_line",
+      "name": "Model Performance Trend",
+      "type": "line_chart",
+      "query": "q_model_performance",
+      "x_axis": "date",
+      "y_axes": ["auc_roc", "auc_pr", "f1"],
+      "reference_lines": [
+        {"value": 0.95, "label": "AUC-ROC target", "colour": "#3498DB"},
+        {"value": 0.80, "label": "AUC-PR target", "colour": "#9B59B6"}
+      ],
+      "title": "Model Performance — Rolling 30 Days"
+    }
+  ],
+
+  "report_pages": [
+    {
+      "id": "page_executive",
+      "name": "Executive Summary",
+      "visuals": ["v_risk_donut", "v_drift_gauge"],
+      "kpi_cards": [
+        {"label": "24h Fraud Rate", "query": "q_risk_summary", "field": "pct_of_total", "filter": "risk_tier IN ('HIGH','CRITICAL')"},
+        {"label": "Active Alerts", "query": "q_aml_alerts", "field": "count"},
+        {"label": "Model Health", "query": "q_model_drift", "field": "status"}
+      ]
+    },
+    {
+      "id": "page_fraud_trends",
+      "name": "Fraud Trends",
+      "visuals": ["v_fraud_rate_line", "v_merchant_bar"],
+      "filters": ["date_range", "merchant_category", "risk_tier"]
+    },
+    {
+      "id": "page_explainability",
+      "name": "Model Explainability (VARA Compliance)",
+      "visuals": ["v_shap_treemap", "v_performance_line"],
+      "compliance_note": "UAE VARA Article 4.3: All automated decisions must include traceable feature attribution."
+    },
+    {
+      "id": "page_aml_compliance",
+      "name": "AML Compliance Queue",
+      "visuals": ["v_alert_table"],
+      "compliance_note": "CBUAE Circular 2/2024 Article 8: CRITICAL alerts must be reviewed within 120 minutes."
+    }
+  ],
+
+  "refresh_schedule": {
+    "type": "scheduled",
+    "frequency": "every_15_minutes",
+    "timezone": "Asia/Dubai",
+    "active_hours": "00:00–23:59",
+    "notify_on_failure": "${POWERBI_ALERT_EMAIL}"
+  }
+}
