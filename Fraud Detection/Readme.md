@@ -165,14 +165,6 @@ POST /api/v1/predict
 
 ---
 
-## 🇦🇪 UAE Regulatory Compliance
-
-- **VARA Virtual Asset Regulation**: All flagged transactions include SHAP justification
-- **CBUAE AML Guidelines**: Compliance reference ID generated per prediction
-- **FATF Recommendations**: Risk-tiered scoring (LOW/MEDIUM/HIGH/CRITICAL)
-- **Audit Trail**: Every prediction logged to MLflow with full feature vector
-
----
 
 ## 📊 Model Performance
 
